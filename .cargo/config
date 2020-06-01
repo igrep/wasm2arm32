@@ -1,0 +1,6 @@
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+rustflags = [
+  "-C", "link-arg=-march=armv7",
+]
+runner = ['bash', 'script/run-on-raspi.sh']
