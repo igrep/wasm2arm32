@@ -1,0 +1,3 @@
+[submodule "vendor/wasmer"]
+	path = vendor/wasmer
+	url = https://github.com/wasmerio/wasmer.git
