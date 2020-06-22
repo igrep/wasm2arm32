@@ -2,9 +2,14 @@ use indexmap::IndexMap;
 use std::{
     any::Any,
     collections::HashMap,
+    path::Path,
+    fmt,
     env, fs,
     ptr::NonNull,
     sync::{Arc, RwLock},
+    io::{Write, stdout},
+    io,
+    process,
 };
 use wasmer_runtime_core::{
     backend::{
@@ -30,16 +35,31 @@ use wasmparser::Type as WpType;
 fn main() {
     let argument = env::args().skip(1).next().expect("No wasm file specified!");
     let wasm_data = fs::read(&argument).expect(&format!("Error reading {:?}", &argument));
-    compile(&wasm_data);
+    compile(&argument, &wasm_data);
 }
 
 #[test]
-fn test1() {
-    let wasm_data = fs::read("tmp/data/example.wasm").expect("Error reading the test wasm file!");
-    compile(&wasm_data);
+fn test_example() {
+    let path = "tmp/data/example.wasm";
+    let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
+    compile(path, &wasm_data);
 }
 
-fn compile(wasm_data: &[u8]) {
+#[test]
+fn test_i32const() {
+    let path = "tmp/data/i32const.wasm";
+    let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
+    compile(path, &wasm_data);
+}
+
+#[test]
+fn test_empty() {
+    let path = "tmp/data/empty.wasm";
+    let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
+    compile(path, &wasm_data);
+}
+
+pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) {
     let mut mcg = Arm32ModuleCodeGenerator::new();
     let mut middlewares = MiddlewareChain::new();
     let compiler_config = CompilerConfig {
@@ -93,10 +113,26 @@ fn compile(wasm_data: &[u8]) {
         generate_debug_info: false,
     };
     // Try reading the sample WASM module
-    println!(
-        "{:#?}",
-        parse::read_module(wasm_data, &mut mcg, &mut middlewares, &compiler_config)
-    );
+    parse::read_module(wasm_data, &mut mcg, &mut middlewares, &compiler_config).expect("Failed to read_module");
+    let asm_path = path.as_ref().with_extension("s");
+    {
+        let asm_out =
+            fs::File::create(&asm_path).expect(&format!("Failed to create file {:?}!", &asm_path));
+        mcg.asm_writer = Box::new(asm_out);
+        mcg.save_asm().unwrap();
+    }
+
+    let obj_path = path.as_ref().with_extension("o");
+    let status = process::Command::new("gcc")
+        .args(&["-o", obj_path.to_string_lossy().as_ref(), asm_path.to_string_lossy().as_ref()])
+        .status()
+        .expect("Unable to run gcc command!");
+    if !status.success() {
+        match status.code() {
+            Some(code) => panic!("gcc exited with status code: {}", code),
+            None       => panic!("gcc terminated by signal")
+        }
+    }
 }
 
 static BACKEND_ID: &str = "singlepass";
@@ -108,15 +144,29 @@ pub struct CodegenError {
 
 pub struct Arm32ModuleCodeGenerator {
     functions: Vec<Arm32FunctionCode>,
+    asm_writer: Box<dyn Write>,
+}
+
+impl Arm32ModuleCodeGenerator {
+    fn save_asm(&mut self) -> io::Result<()> {
+        for fx in &self.functions {
+            writeln!(self.asm_writer, ".global {}", fx.name)?
+        }
+        for fx in &self.functions {
+            writeln!(self.asm_writer, "{}", fx.asm)?
+        }
+        Ok(())
+    }
 }
 
 impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
-    for Arm32ModuleCodeGenerator
+for Arm32ModuleCodeGenerator
 {
     /// Creates a new module code generator.
     fn new() -> Self {
         Arm32ModuleCodeGenerator {
             functions: Vec::new(),
+            asm_writer: Box::new(stdout()),
         }
     }
 
@@ -175,12 +225,14 @@ impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
     /// Creates a new function and returns the function-scope code generator for it.
     fn next_function(
         &mut self,
-        _module_info: Arc<RwLock<ModuleInfo>>,
+        module_info: Arc<RwLock<ModuleInfo>>,
         loc: WasmSpan,
     ) -> Result<&mut Arm32FunctionCode, CodegenError> {
-        println!("next_function: loc: {:?}", loc);
+        println!("next_function: loc: {:?}, module_info: {:#?}", loc, module_info);
         let code = Arm32FunctionCode {
-            function_id: self.functions.len(),
+            id: self.functions.len(),
+            name: "main".into(),
+            asm: String::new(),
         };
         println!("next_function: return: {:?}", code);
         self.functions.push(code);
@@ -201,10 +253,10 @@ impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
             Box<dyn CacheGen>,
         ),
         CodegenError,
-    > {
-        println!("finalize: {:#?}", module_info);
-        let cache = DummyCacheGen::DummyCacheGen;
-        Ok((Arm32ExecutionContext { hoge: 0 }, None, Box::new(cache)))
+        > {
+            println!("finalize: {:#?}", module_info);
+            let cache = DummyCacheGen::DummyCacheGen;
+            Ok((Arm32ExecutionContext { hoge: 0 }, None, Box::new(cache)))
     }
 
     /// Creates a module from cache.
@@ -270,9 +322,11 @@ impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Arm32FunctionCode {
-    function_id: usize,
+    id: usize,
+    name: String,
+    asm: String,
 }
 
 impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
@@ -295,8 +349,9 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
     }
 
     /// Called before the first call to `feed_opcode`.
-    fn begin_body(&mut self, _module_info: &ModuleInfo) -> Result<(), CodegenError> {
-        println!("begin_body");
+    fn begin_body(&mut self, module_info: &ModuleInfo) -> Result<(), CodegenError> {
+        println!("begin_body: {:#?}", module_info);
+        self.asm.push_str(format!("{}:\n", self.name).as_str());
         Ok(())
     }
 
@@ -314,6 +369,7 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
     /// Finalizes the function.
     fn finalize(&mut self) -> Result<(), CodegenError> {
         println!("finalize");
+        self.asm.push_str("  BX lr");
         Ok(())
     }
 }
