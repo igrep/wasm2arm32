@@ -2,7 +2,7 @@ use indexmap::IndexMap;
 use std::{
     any::Any,
     collections::HashMap,
-    path::Path,
+    path::{Path, PathBuf},
     fmt,
     env, fs,
     ptr::NonNull,
@@ -30,7 +30,7 @@ use wasmer_runtime_core::{
     types::{FuncIndex, FuncSig, LocalFuncIndex, SigIndex},
     vm,
 };
-use wasmparser::Type as WpType;
+use wasmparser::{Operator, Type as WpType};
 
 fn main() {
     let argument = env::args().skip(1).next().expect("No wasm file specified!");
@@ -49,7 +49,9 @@ fn test_example() {
 fn test_i32const() {
     let path = "tmp/data/i32const.wasm";
     let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
-    compile(path, &wasm_data);
+    let obj_path = compile(path, &wasm_data);
+    let status = process::Command::new(&obj_path).status().expect("Failed to execute compiled object code!");
+    assert_eq!(status.code(), Some(42));
 }
 
 #[test]
@@ -59,7 +61,7 @@ fn test_empty() {
     compile(path, &wasm_data);
 }
 
-pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) {
+pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) -> PathBuf {
     let mut mcg = Arm32ModuleCodeGenerator::new();
     let mut middlewares = MiddlewareChain::new();
     let compiler_config = CompilerConfig {
@@ -133,6 +135,7 @@ pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) {
             None       => panic!("gcc terminated by signal")
         }
     }
+    return obj_path;
 }
 
 static BACKEND_ID: &str = "singlepass";
@@ -362,7 +365,12 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
         _module_info: &ModuleInfo,
         source_loc: u32,
     ) -> Result<(), CodegenError> {
-        println!("feed_event, op: {:#?}, source_loc: {:#?}", op, source_loc);
+        match op {
+            Event::Wasm(Operator::I32Const { value }) =>
+                self.asm.push_str(format!("  MOV R0, #{}\n", value).as_str()),
+            _ =>
+                println!("Unknown event: {:#?}, at {:#?}", op, source_loc)
+        }
         Ok(())
     }
 
