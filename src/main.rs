@@ -46,6 +46,15 @@ fn test_example() {
 }
 
 #[test]
+fn test_i32add() {
+    let path = "tmp/data/i32add.wasm";
+    let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
+    let obj_path = compile(path, &wasm_data);
+    let status = process::Command::new(&obj_path).status().expect("Failed to execute compiled object code!");
+    assert_eq!(status.code(), Some(46));
+}
+
+#[test]
 fn test_i32const() {
     let path = "tmp/data/i32const.wasm";
     let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
@@ -366,8 +375,14 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
         source_loc: u32,
     ) -> Result<(), CodegenError> {
         match op {
-            Event::Wasm(Operator::I32Const { value }) =>
-                self.asm.push_str(format!("  MOV R0, #{}\n", value).as_str()),
+            Event::Wasm(Operator::I32Const { value }) => {
+                self.asm.push_str(format!("  MOV R0, #{}\n", value).as_str());
+                self.asm.push_str("  PUSH {R0}\n")
+            }
+            Event::Wasm(Operator::I32Add) => {
+                self.asm.push_str("  POP {R1-R2}\n");
+                self.asm.push_str("  ADD R0, R1, R2\n")
+            },
             _ =>
                 println!("Unknown event: {:#?}, at {:#?}", op, source_loc)
         }
