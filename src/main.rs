@@ -2,14 +2,12 @@ use indexmap::IndexMap;
 use std::{
     any::Any,
     collections::HashMap,
+    env, fmt, fs, io,
+    io::{stdout, Write},
     path::{Path, PathBuf},
-    fmt,
-    env, fs,
+    process,
     ptr::NonNull,
     sync::{Arc, RwLock},
-    io::{Write, stdout},
-    io,
-    process,
 };
 use wasmer_runtime_core::{
     backend::{
@@ -50,7 +48,9 @@ fn test_i32add() {
     let path = "tmp/data/i32add.wasm";
     let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
     let obj_path = compile(path, &wasm_data);
-    let status = process::Command::new(&obj_path).status().expect("Failed to execute compiled object code!");
+    let status = process::Command::new(&obj_path)
+        .status()
+        .expect("Failed to execute compiled object code!");
     assert_eq!(status.code(), Some(46));
 }
 
@@ -59,7 +59,9 @@ fn test_i32const() {
     let path = "tmp/data/i32const.wasm";
     let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
     let obj_path = compile(path, &wasm_data);
-    let status = process::Command::new(&obj_path).status().expect("Failed to execute compiled object code!");
+    let status = process::Command::new(&obj_path)
+        .status()
+        .expect("Failed to execute compiled object code!");
     assert_eq!(status.code(), Some(42));
 }
 
@@ -124,7 +126,8 @@ pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) -> Path
         generate_debug_info: false,
     };
     // Try reading the sample WASM module
-    parse::read_module(wasm_data, &mut mcg, &mut middlewares, &compiler_config).expect("Failed to read_module");
+    parse::read_module(wasm_data, &mut mcg, &mut middlewares, &compiler_config)
+        .expect("Failed to read_module");
     let asm_path = path.as_ref().with_extension("s");
     {
         let asm_out =
@@ -135,13 +138,17 @@ pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) -> Path
 
     let obj_path = path.as_ref().with_extension("o");
     let status = process::Command::new("gcc")
-        .args(&["-o", obj_path.to_string_lossy().as_ref(), asm_path.to_string_lossy().as_ref()])
+        .args(&[
+            "-o",
+            obj_path.to_string_lossy().as_ref(),
+            asm_path.to_string_lossy().as_ref(),
+        ])
         .status()
         .expect("Unable to run gcc command!");
     if !status.success() {
         match status.code() {
             Some(code) => panic!("gcc exited with status code: {}", code),
-            None       => panic!("gcc terminated by signal")
+            None => panic!("gcc terminated by signal"),
         }
     }
     return obj_path;
@@ -172,7 +179,7 @@ impl Arm32ModuleCodeGenerator {
 }
 
 impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
-for Arm32ModuleCodeGenerator
+    for Arm32ModuleCodeGenerator
 {
     /// Creates a new module code generator.
     fn new() -> Self {
@@ -265,10 +272,10 @@ for Arm32ModuleCodeGenerator
             Box<dyn CacheGen>,
         ),
         CodegenError,
-        > {
-            println!("finalize: {:#?}", module_info);
-            let cache = DummyCacheGen::DummyCacheGen;
-            Ok((Arm32ExecutionContext { hoge: 0 }, None, Box::new(cache)))
+    > {
+        println!("finalize: {:#?}", module_info);
+        let cache = DummyCacheGen::DummyCacheGen;
+        Ok((Arm32ExecutionContext { hoge: 0 }, None, Box::new(cache)))
     }
 
     /// Creates a module from cache.
@@ -376,7 +383,8 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
     ) -> Result<(), CodegenError> {
         match op {
             Event::Wasm(Operator::I32Const { value }) => {
-                self.asm.push_str(format!("  MOV R0, #{}\n", value).as_str());
+                self.asm
+                    .push_str(format!("  MOV R0, #{}\n", value).as_str());
                 self.asm.push_str("  PUSH {R0}\n")
             }
             Event::Wasm(Operator::I32Add) => {
