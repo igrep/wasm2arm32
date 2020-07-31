@@ -2,7 +2,7 @@
 
 CARGO_TEST_ARGS :=
 
-test: data/example.wasm data/i32const.wasm data/empty.wasm data/i32add.wasm
+test: data/example.wasm data/i32const.wasm data/empty.wasm data/i32add.wasm data/call.wasm
 	cargo test --target armv7-unknown-linux-gnueabihf -- $(CARGO_TEST_ARGS)
 
 data/%.wasm: data/%.wat

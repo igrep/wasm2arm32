@@ -20,10 +20,10 @@ use wasmer_runtime_core::{
         ModuleCodeGenerator, WasmSpan,
     },
     fault,
-    module::{ModuleInfo, ModuleInner, StringTable},
+    module::{ExportIndex, ModuleInfo, ModuleInner, StringTable},
     parse,
     state::ModuleStateMap,
-    structures::Map,
+    structures::{Map, TypedIndex},
     typed_func::Wasm,
     types::{FuncIndex, FuncSig, LocalFuncIndex, SigIndex},
     vm,
@@ -41,6 +41,17 @@ fn test_example() {
     let path = "tmp/data/example.wasm";
     let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
     compile(path, &wasm_data);
+}
+
+#[test]
+fn test_call() {
+    let path = "tmp/data/call.wasm";
+    let wasm_data = fs::read(path).expect("Error reading the test wasm file!");
+    let obj_path = compile(path, &wasm_data);
+    let status = process::Command::new(&obj_path)
+        .status()
+        .expect("Failed to execute compiled object code!");
+    assert_eq!(status.code(), Some(17));
 }
 
 #[test]
@@ -170,12 +181,30 @@ pub struct Arm32ModuleCodeGenerator {
 impl Arm32ModuleCodeGenerator {
     fn save_asm(&mut self) -> io::Result<()> {
         for fx in &self.functions {
-            writeln!(self.asm_writer, ".global {}", fx.name)?
+            if let Some(func_name) = &fx.name {
+                writeln!(self.asm_writer, ".global {}", func_name)?
+            }
         }
         for fx in &self.functions {
             writeln!(self.asm_writer, "{}", fx.asm)?
         }
         Ok(())
+    }
+
+    fn find_function_name(function_id: usize, module_info: &ModuleInfo) -> Option<String> {
+        module_info
+            .exports
+            .iter()
+            .find(|(_func_name, idx)| match idx {
+                ExportIndex::Func(idx) => function_id == idx.index(),
+                _other => false,
+            })
+            .map(|(func_name, _idx)| func_name.to_string())
+    }
+
+    fn find_function_name_or_generate(function_id: usize, module_info: &ModuleInfo) -> String {
+        Self::find_function_name(function_id, module_info)
+            .unwrap_or_else(|| format!("fx{}", function_id))
     }
 }
 
@@ -248,10 +277,14 @@ impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
         module_info: Arc<RwLock<ModuleInfo>>,
         loc: WasmSpan,
     ) -> Result<&mut Arm32FunctionCode, CodegenError> {
-        println!("next_function: loc: {:?}, module_info: {:#?}", loc, module_info);
+        println!("");
+        let id = self.functions.len();
+        let module_info = module_info
+            .read()
+            .expect("next_function: Can't get lock of module_info");
         let code = Arm32FunctionCode {
-            id: self.functions.len(),
-            name: "main".into(),
+            id,
+            name: Self::find_function_name(id, &*module_info),
             asm: String::new(),
         };
         println!("next_function: return: {:?}", code);
@@ -345,8 +378,14 @@ impl ModuleCodeGenerator<Arm32FunctionCode, Arm32ExecutionContext, CodegenError>
 #[derive(Clone, Debug)]
 pub struct Arm32FunctionCode {
     id: usize,
-    name: String,
+    name: Option<String>,
     asm: String,
+}
+
+impl Arm32FunctionCode {
+    fn get_function_name(&self) -> String {
+        self.name.clone().unwrap_or(format!("fx{}", self.id))
+    }
 }
 
 impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
@@ -371,7 +410,9 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
     /// Called before the first call to `feed_opcode`.
     fn begin_body(&mut self, module_info: &ModuleInfo) -> Result<(), CodegenError> {
         println!("begin_body: {:#?}", module_info);
-        self.asm.push_str(format!("{}:\n", self.name).as_str());
+        self.asm
+            .push_str(format!("{}:\n", self.get_function_name()).as_str());
+        self.asm.push_str("  PUSH {LR}\n");
         Ok(())
     }
 
@@ -379,7 +420,7 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
     fn feed_event(
         &mut self,
         op: Event,
-        _module_info: &ModuleInfo,
+        module_info: &ModuleInfo,
         source_loc: u32,
     ) -> Result<(), CodegenError> {
         match op {
@@ -389,11 +430,31 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
                 self.asm.push_str("  PUSH {R0}\n")
             }
             Event::Wasm(Operator::I32Add) => {
-                self.asm.push_str("  POP {R1-R2}\n");
-                self.asm.push_str("  ADD R0, R1, R2\n")
-            },
-            _ =>
-                println!("Unknown event: {:#?}, at {:#?}", op, source_loc)
+                self.asm.push_str("  POP {R0-R1}\n");
+                self.asm.push_str("  ADD R0, R0, R1\n");
+                self.asm.push_str("  PUSH {R0}\n")
+            }
+            Event::Wasm(Operator::LocalGet { local_index }) => {
+                self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
+            }
+            Event::Wasm(Operator::Call { function_index }) => {
+                let function_index_usize = *function_index as usize;
+                let sig = &module_info.signatures[SigIndex::new(function_index_usize)];
+                let params_count = sig.params().len();
+                if params_count == 1 {
+                    self.asm.push_str("  POP {R0}\n");
+                } else if params_count > 0 {
+                    self.asm
+                        .push_str(&format!("  POP {{R0-R{}}}\n", params_count - 1));
+                }
+                let function_name = Arm32ModuleCodeGenerator::find_function_name_or_generate(
+                    function_index_usize,
+                    module_info,
+                );
+                self.asm.push_str(&format!("  BL {}\n", function_name));
+                self.asm.push_str("  PUSH {R0}\n")
+            }
+            _ => println!("Unknown event: {:#?}, at {:#?}", op, source_loc),
         }
         Ok(())
     }
@@ -401,7 +462,9 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
     /// Finalizes the function.
     fn finalize(&mut self) -> Result<(), CodegenError> {
         println!("finalize");
-        self.asm.push_str("  BX lr");
+        self.asm.push_str("  POP {R0}\n");
+        self.asm.push_str("  POP {LR}\n");
+        self.asm.push_str("  BX LR\n");
         Ok(())
     }
 }
