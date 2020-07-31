@@ -139,6 +139,7 @@ pub fn compile<P: AsRef<Path> + fmt::Display>(path: P, wasm_data: &[u8]) -> Path
     let obj_path = path.as_ref().with_extension("o");
     let status = process::Command::new("gcc")
         .args(&[
+            "-g3",
             "-o",
             obj_path.to_string_lossy().as_ref(),
             asm_path.to_string_lossy().as_ref(),
