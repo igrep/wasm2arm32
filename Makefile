@@ -19,3 +19,6 @@ data/%.json: data/%.wast
 clean:
 	rm -f data/*.wasm data/*.json
 	ssh "$(SSH_RASPI_USER_HOST)" "rm -f ~/tmp/data/* ~/tmp/wasm2arm-test"
+
+data/*.s:
+	scp $(SSH_RASPI_USER_HOST):~/tmp/$@ data/
