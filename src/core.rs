@@ -306,6 +306,13 @@ impl Arm32FunctionCode {
     fn get_function_name(&self) -> String {
         self.name.clone().unwrap_or(format!("fx{}", self.id))
     }
+
+    fn push_binop(&mut self, instruction: &str) {
+        self.asm.push_str("  POP {R0-R1}\n");
+        self.asm
+            .push_str(&format!("  {} R0, R1, R0\n", instruction));
+        self.asm.push_str("  PUSH {R0}\n")
+    }
 }
 
 impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
@@ -349,11 +356,9 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
                     .push_str(format!("  LDR R0, ={}\n", value).as_str());
                 self.asm.push_str("  PUSH {R0}\n")
             }
-            Event::Wasm(Operator::I32Add) => {
-                self.asm.push_str("  POP {R0-R1}\n");
-                self.asm.push_str("  ADD R0, R0, R1\n");
-                self.asm.push_str("  PUSH {R0}\n")
-            }
+            Event::Wasm(Operator::I32Add) => self.push_binop("ADD"),
+            Event::Wasm(Operator::I32Sub) => self.push_binop("SUB"),
+            Event::Wasm(Operator::I32Mul) => self.push_binop("MUL"),
             Event::Wasm(Operator::LocalGet { local_index }) => {
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
             }
