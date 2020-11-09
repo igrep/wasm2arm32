@@ -307,11 +307,30 @@ impl Arm32FunctionCode {
         self.name.clone().unwrap_or(format!("fx{}", self.id))
     }
 
+    fn push_unop(&mut self, instruction: &str) {
+        self.asm.push_str("  POP {R0}\n");
+        self.asm.push_str(&format!("  {} R0, R0\n", instruction));
+        self.asm.push_str("  PUSH {R0}\n")
+    }
+
     fn push_binop(&mut self, instruction: &str) {
         self.asm.push_str("  POP {R0-R1}\n");
         self.asm
             .push_str(&format!("  {} R0, R1, R0\n", instruction));
         self.asm.push_str("  PUSH {R0}\n")
+    }
+
+    fn push_binfunc(&mut self, func_name: &str) {
+        self.asm.push_str("  POP {R1}\n");
+        self.asm.push_str("  POP {R0}\n");
+        self.asm.push_str(&format!("  BL {}\n", func_name));
+        self.asm.push_str("  PUSH {R0}\n")
+    }
+
+    fn push_mod32(&mut self) {
+        self.asm.push_str("  MOV R0, #32\n");
+        self.asm.push_str("  PUSH {R0}\n");
+        self.push_binfunc("__umodsi3")
     }
 }
 
@@ -359,7 +378,42 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
             Event::Wasm(Operator::I32Add) => self.push_binop("ADD"),
             Event::Wasm(Operator::I32Sub) => self.push_binop("SUB"),
             Event::Wasm(Operator::I32Mul) => self.push_binop("MUL"),
+            Event::Wasm(Operator::I32DivS) => self.push_binfunc("__divsi3"),
+            Event::Wasm(Operator::I32DivU) => self.push_binfunc("__udivsi3"),
+            Event::Wasm(Operator::I32RemS) => self.push_binfunc("__modsi3"),
+            Event::Wasm(Operator::I32RemU) => self.push_binfunc("__umodsi3"),
+            Event::Wasm(Operator::I32And) => self.push_binop("AND"),
+            Event::Wasm(Operator::I32Or) => self.push_binop("ORR"),
+            Event::Wasm(Operator::I32Xor) => self.push_binop("EOR"),
+            Event::Wasm(Operator::I32Shl) => {
+                self.push_mod32();
+                self.push_binop("LSL")
+            }
+            Event::Wasm(Operator::I32ShrS) => {
+                self.push_mod32();
+                self.push_binop("ASR")
+            }
+            Event::Wasm(Operator::I32ShrU) => {
+                self.push_mod32();
+                self.push_binop("LSR")
+            }
+            Event::Wasm(Operator::I32Rotl) => {
+                self.push_mod32();
+                // equivalent to `i32.const 32`
+                self.asm.push_str("  MOV R0, #32\n");
+                self.asm.push_str("  PUSH {R0}\n");
+
+                self.push_binop("SUB");
+                self.push_unop("NEG");
+
+                self.push_binop("ROR")
+            }
+            Event::Wasm(Operator::I32Rotr) => {
+                self.push_mod32();
+                self.push_binop("ROR")
+            }
             Event::Wasm(Operator::LocalGet { local_index }) => {
+                // TODO: Support more than 4 arguments.
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
             }
             Event::Wasm(Operator::Call { function_index }) => {
