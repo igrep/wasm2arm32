@@ -97,10 +97,71 @@ pub struct CodegenError {
 pub struct Arm32ModuleCodeGenerator {
     functions: Vec<Arm32FunctionCode>,
 }
+const RUNTIME_ASM: &str = "\
+@ Ref. http://graphics.stanford.edu/~seander/bithacks.html#ZerosOnRightBinSearch
+@ R0: Input (finally it becomes return value).
+@ R1: Accumulator.
+@ R2: Temporary result.
+__wasm2arm32_ctz:
+  PUSH {LR}
+  CMP R0, #0
+  BNE __wasm2arm32_ctz_NON_ZERO
+  MOV R0, #32
+  B __wasm2arm32_ctz_END
+
+__wasm2arm32_ctz_NON_ZERO:
+  AND R2, R0, #1
+  CMP R2, #0
+  BEQ __wasm2arm32_ctz_EVEN
+  MOV R0, #0
+  B __wasm2arm32_ctz_END
+
+__wasm2arm32_ctz_EVEN:
+  MOV R1, #1
+  MOVW R2, #0xffff
+  MOVT R2, #0x0000
+  AND R2, R0, R2
+  CMP R2, #0
+  BNE __wasm2arm32_ctz_FF
+  LSR R0, R0, #16
+  ADD R1, R1, #16
+
+__wasm2arm32_ctz_FF:
+  AND R2, R0, #0xff
+  CMP R2, #0
+  BNE __wasm2arm32_ctz_F
+  LSR R0, R0, #8
+  ADD R1, R1, #8
+
+__wasm2arm32_ctz_F:
+  AND R2, R0, #0xf
+  CMP R2, #0
+  BNE __wasm2arm32_ctz_3
+  LSR R0, R0, #4
+  ADD R1, R1, #4
+
+__wasm2arm32_ctz_3:
+  AND R2, R0, #0x3
+  CMP R2, #0
+  BNE __wasm2arm32_ctz_1
+  LSR R0, R0, #2
+  ADD R1, R1, #2
+
+__wasm2arm32_ctz_1:
+  @ Translate c -= v & 0x1;
+  AND R2, R0, #1
+  SUB R1, R1, R2
+  MOV R0, R1
+
+__wasm2arm32_ctz_END:
+  POP {LR}
+  BX LR
+
+";
 
 impl Arm32ModuleCodeGenerator {
     fn generate_asm(&mut self) -> String {
-        let mut result = String::new();
+        let mut result = String::from(RUNTIME_ASM);
         for fx in &self.functions {
             if let Some(func_name) = &fx.name {
                 result.push_str(&format!(".global {}\n", func_name));
@@ -313,6 +374,12 @@ impl Arm32FunctionCode {
         self.asm.push_str("  PUSH {R0}\n")
     }
 
+    fn push_unfunc(&mut self, func_name: &str) {
+        self.asm.push_str("  POP {R0}\n");
+        self.asm.push_str(&format!("  BL {}\n", func_name));
+        self.asm.push_str("  PUSH {R0}\n")
+    }
+
     fn push_binop(&mut self, instruction: &str) {
         self.asm.push_str("  POP {R0-R1}\n");
         self.asm
@@ -412,6 +479,8 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
                 self.push_mod32();
                 self.push_binop("ROR")
             }
+            Event::Wasm(Operator::I32Clz) => self.push_unop("CLZ"),
+            Event::Wasm(Operator::I32Ctz) => self.push_unfunc("__wasm2arm32_ctz"),
             Event::Wasm(Operator::LocalGet { local_index }) => {
                 // TODO: Support more than 4 arguments.
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
