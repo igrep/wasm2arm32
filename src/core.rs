@@ -103,7 +103,6 @@ const RUNTIME_ASM: &str = "\
 @ R1: Accumulator.
 @ R2: Temporary result.
 __wasm2arm32_ctz:
-  PUSH {LR}
   CMP R0, #0
   BNE __wasm2arm32_ctz_NON_ZERO
   MOV R0, #32
@@ -154,7 +153,6 @@ __wasm2arm32_ctz_1:
   MOV R0, R1
 
 __wasm2arm32_ctz_END:
-  POP {LR}
   BX LR
 
 ";
