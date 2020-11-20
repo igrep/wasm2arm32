@@ -155,6 +155,27 @@ __wasm2arm32_ctz_1:
 __wasm2arm32_ctz_END:
   BX LR
 
+
+@ Ref. http://graphics.stanford.edu/~seander/bithacks.html#ZerosOnRightBinSearch
+@ R0: Input (finally it becomes return value).
+@ R1: Accumulator.
+@ R2: Temporary result.
+__wasm2arm32_popcnt:
+  MOV R1, #0
+
+__wasm2arm32_popcnt_LOOP:
+  CMP R0, #0
+  BEQ __wasm2arm32_popcnt_END
+  ADD R1, R1, #1
+
+  SUB R2, R0, #1
+  AND R0, R0, R2
+
+  B __wasm2arm32_popcnt_LOOP
+
+__wasm2arm32_popcnt_END:
+  MOV R0, R1
+  BX LR
 ";
 
 impl Arm32ModuleCodeGenerator {
@@ -479,6 +500,7 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
             }
             Event::Wasm(Operator::I32Clz) => self.push_unop("CLZ"),
             Event::Wasm(Operator::I32Ctz) => self.push_unfunc("__wasm2arm32_ctz"),
+            Event::Wasm(Operator::I32Popcnt) => self.push_unfunc("__wasm2arm32_popcnt"),
             Event::Wasm(Operator::LocalGet { local_index }) => {
                 // TODO: Support more than 4 arguments.
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
