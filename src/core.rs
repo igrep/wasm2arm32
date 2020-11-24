@@ -501,6 +501,8 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
             Event::Wasm(Operator::I32Clz) => self.push_unop("CLZ"),
             Event::Wasm(Operator::I32Ctz) => self.push_unfunc("__wasm2arm32_ctz"),
             Event::Wasm(Operator::I32Popcnt) => self.push_unfunc("__wasm2arm32_popcnt"),
+            Event::Wasm(Operator::I32Extend8S) => self.push_unop("SXTB"),
+            Event::Wasm(Operator::I32Extend16S) => self.push_unop("SXTH"),
             Event::Wasm(Operator::LocalGet { local_index }) => {
                 // TODO: Support more than 4 arguments.
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
