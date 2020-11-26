@@ -503,6 +503,13 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
             Event::Wasm(Operator::I32Popcnt) => self.push_unfunc("__wasm2arm32_popcnt"),
             Event::Wasm(Operator::I32Extend8S) => self.push_unop("SXTB"),
             Event::Wasm(Operator::I32Extend16S) => self.push_unop("SXTH"),
+            Event::Wasm(Operator::I32Eqz) => {
+                self.asm.push_str("  POP {R0}\n");
+                self.asm.push_str("  CMP R0, #0\n");
+                self.asm.push_str("  MOVEQ R0, #1\n");
+                self.asm.push_str("  MOVNE R0, #0\n");
+                self.asm.push_str("  PUSH {R0}\n")
+            }
             Event::Wasm(Operator::LocalGet { local_index }) => {
                 // TODO: Support more than 4 arguments.
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
