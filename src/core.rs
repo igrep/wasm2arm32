@@ -406,6 +406,15 @@ impl Arm32FunctionCode {
         self.asm.push_str("  PUSH {R0}\n")
     }
 
+    fn push_relop(&mut self, flag: &str, negated_flag: &str) {
+        self.asm.push_str("  POP {R0-R1}\n");
+        self.asm.push_str("  CMP R1, R0\n");
+        self.asm.push_str(&format!("  MOV{} R0, #1\n", flag));
+        self.asm
+            .push_str(&format!("  MOV{} R0, #0\n", negated_flag));
+        self.asm.push_str("  PUSH {R0}\n")
+    }
+
     fn push_binfunc(&mut self, func_name: &str) {
         self.asm.push_str("  POP {R1}\n");
         self.asm.push_str("  POP {R0}\n");
@@ -510,6 +519,19 @@ impl FunctionCodeGenerator<CodegenError> for Arm32FunctionCode {
                 self.asm.push_str("  MOVNE R0, #0\n");
                 self.asm.push_str("  PUSH {R0}\n")
             }
+            Event::Wasm(Operator::I32Eq) => self.push_relop("EQ", "NE"),
+            Event::Wasm(Operator::I32Ne) => self.push_relop("NE", "EQ"),
+
+            Event::Wasm(Operator::I32LtS) => self.push_relop("LT", "GE"),
+            Event::Wasm(Operator::I32LtU) => self.push_relop("CC", "CS"),
+            Event::Wasm(Operator::I32LeS) => self.push_relop("LE", "GT"),
+            Event::Wasm(Operator::I32LeU) => self.push_relop("LS", "HI"),
+
+            Event::Wasm(Operator::I32GtS) => self.push_relop("GT", "LE"),
+            Event::Wasm(Operator::I32GtU) => self.push_relop("HI", "LS"),
+            Event::Wasm(Operator::I32GeS) => self.push_relop("GE", "LT"),
+            Event::Wasm(Operator::I32GeU) => self.push_relop("CS", "CC"),
+
             Event::Wasm(Operator::LocalGet { local_index }) => {
                 // TODO: Support more than 4 arguments.
                 self.asm.push_str(&format!("  PUSH {{R{}}}\n", local_index))
